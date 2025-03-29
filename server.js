@@ -115,7 +115,7 @@ app.get('/api/v1/clients/:id', (req, res) => {
  *
  */
 app.put('/api/v1/clients/:id', (req, res) => {
-  const id = parseInt(req.params.id , 10);
+  const id = parseInt(req.params.id, 10);
   const { valid, messageObj } = validateId(id);
   if (!valid) {
     res.status(400).send(messageObj);
@@ -125,10 +125,54 @@ app.put('/api/v1/clients/:id', (req, res) => {
   let clients = db.prepare('select * from clients').all();
   const client = clients.find(client => client.id === id);
 
-  /* ---------- Update code below ----------*/
+  // If no changes requested, return current state
+  if (!status && !priority) {
+    return res.status(200).send(clients);
+  }
 
+  // Validate status if provided
+  if (status) {
+    if (status !== 'backlog' && status !== 'in-progress' && status !== 'complete') {
+      return res.status(400).send({
+        'message': 'Invalid status provided.',
+        'long_message': 'Status can only be one of the following: [backlog | in-progress | complete].'
+      });
+    }
+  } else {
+    status = client.status; // Keep existing status if not provided
+  }
 
+  // Validate priority if provided
+  if (priority !== undefined) {
+    const { valid: priorityValid, messageObj: priorityMessage } = validatePriority(priority);
+    if (!priorityValid) {
+      return res.status(400).send(priorityMessage);
+    }
+  }
 
+  // Get all clients with same target status
+  const sameStatusClients = clients.filter(c => c.status === status && c.id !== id);
+  
+  // If priority not provided, place at end of list
+  if (priority === undefined) {
+    priority = sameStatusClients.length > 0 
+      ? Math.max(...sameStatusClients.map(c => c.priority)) + 1 
+      : 1;
+  }
+
+  // Reorder priorities if needed
+  if (sameStatusClients.length > 0) {
+    // Shift existing priorities to make room for new priority
+    const updatePriorities = db.prepare('UPDATE clients SET priority = priority + 1 WHERE status = ? AND priority >= ? AND id != ?');
+    updatePriorities.run(status, priority, id);
+  }
+
+  // Update the client's status and priority
+  const updateClient = db.prepare('UPDATE clients SET status = ?, priority = ? WHERE id = ?');
+  updateClient.run(status, priority, id);
+
+  // Return updated client list
+  clients = db.prepare('SELECT * FROM clients').all();
   return res.status(200).send(clients);
 });
 
